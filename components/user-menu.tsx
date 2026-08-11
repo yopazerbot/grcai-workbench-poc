@@ -2,17 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LogOut } from "lucide-react";
+import { signOut } from "next-auth/react";
 
-export function UserMenu({
-  name,
-  email,
-  signOutAction,
-}: {
-  name: string;
-  email: string;
-  signOutAction: () => Promise<void>;
-}) {
+export function UserMenu({ name, email }: { name: string; email: string }) {
   const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,6 +33,17 @@ export function UserMenu({
     .join("")
     .toUpperCase();
 
+  // REST-flow sign-out + relative navigation: works behind reverse proxies
+  // that rewrite the Host header (see components/signin-buttons.tsx).
+  const handleSignOut = async () => {
+    setPending(true);
+    try {
+      await signOut({ redirect: false });
+    } finally {
+      window.location.assign("/signin");
+    }
+  };
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -59,16 +64,16 @@ export function UserMenu({
             <p className="truncate text-xs text-slate-500">{email}</p>
           </div>
           <div className="my-1 border-t border-slate-100" />
-          <form action={signOutAction}>
-            <button
-              type="submit"
-              role="menuitem"
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <LogOut className="size-4" />
-              Sign out
-            </button>
-          </form>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={pending}
+            onClick={handleSignOut}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-60"
+          >
+            <LogOut className="size-4" />
+            {pending ? "Signing out…" : "Sign out"}
+          </button>
         </div>
       )}
     </div>

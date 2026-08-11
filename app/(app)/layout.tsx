@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { auth } from "@/auth";
-import { signOutAction } from "@/app/actions";
 import { NavLinks } from "@/components/nav-links";
 import { UserMenu } from "@/components/user-menu";
 
@@ -28,11 +27,7 @@ export default async function AppLayout({
             </Link>
             <NavLinks />
           </div>
-          <UserMenu
-            name={user.name ?? user.email}
-            email={user.email}
-            signOutAction={signOutAction}
-          />
+          <UserMenu name={user.name ?? user.email} email={user.email} />
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">{children}</main>
