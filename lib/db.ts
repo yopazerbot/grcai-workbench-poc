@@ -22,10 +22,16 @@ export function getDb(): Database.Database {
   const db = new Database(path);
   db.pragma("busy_timeout = 5000");
   try {
-    // WAL is a performance nicety only — some mounted volume filesystems
-    // refuse it (shared-memory files), and the default journal works fine.
-    db.pragma("journal_mode = WAL");
+    // Deliberately NOT WAL: WAL mmaps a shared-memory file, which
+    // segfaults the process on some mounted volume filesystems (seen on
+    // Railway). DELETE journal needs no mmap, and single-analyst traffic
+    // doesn't need WAL concurrency. Also converts dbs created by older
+    // builds that enabled WAL.
+    db.pragma("journal_mode = DELETE");
   } catch {}
+  console.log(
+    `[db] opened ${path} (journal=${JSON.stringify(db.pragma("journal_mode", { simple: true }))})`
+  );
   db.exec(DDL);
   seedIfEmpty(db);
 
