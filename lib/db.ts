@@ -20,7 +20,12 @@ export function getDb(): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
 
   const db = new Database(path);
-  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  try {
+    // WAL is a performance nicety only — some mounted volume filesystems
+    // refuse it (shared-memory files), and the default journal works fine.
+    db.pragma("journal_mode = WAL");
+  } catch {}
   db.exec(DDL);
   seedIfEmpty(db);
 
