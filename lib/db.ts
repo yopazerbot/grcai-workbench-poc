@@ -87,9 +87,18 @@ function dropAllTables(db: Database.Database): void {
   const tables = db
     .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
     .all() as Array<{ name: string }>;
-  db.transaction(() => {
-    for (const t of tables) db.exec(`DROP TABLE IF EXISTS "${t.name.replace(/"/g, '""')}"`);
-  })();
+  // better-sqlite3 enforces foreign keys by default, and SQLite refuses to
+  // drop a parent table (runs, documents) while child rows still reference
+  // it. Enforcement is suspended for the drop only — the pragma is a no-op
+  // inside a transaction, so it must be toggled outside of it.
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      for (const t of tables) db.exec(`DROP TABLE IF EXISTS "${t.name.replace(/"/g, '""')}"`);
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
 }
 
 function seedIfEmpty(db: Database.Database): void {

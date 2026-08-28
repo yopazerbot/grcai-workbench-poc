@@ -242,8 +242,43 @@ await check("posture, evidence, queue and upcoming compute", () => {
   assert(d.recentAudit.length === 8, "recent audit missing");
 });
 
+console.log("8. migration from a previous-schema database");
+await check("v1 database with child rows is reset and re-seeded", async () => {
+  // Build a schema-v1 database the way the previous release would have left
+  // it: runs with run_items referencing them (the case that trips foreign
+  // key enforcement when tables are dropped in the wrong order).
+  const Database = (await import("better-sqlite3")).default;
+  const v1Path = join(tempDir, "v1.db");
+  const v1 = new Database(v1Path);
+  v1.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE org_knowledge (id TEXT PRIMARY KEY, category TEXT NOT NULL, ref_id TEXT, title TEXT NOT NULL, body TEXT NOT NULL, data_json TEXT, updated_at TEXT NOT NULL);
+    CREATE TABLE runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, status TEXT NOT NULL, input_json TEXT NOT NULL, input_summary TEXT NOT NULL, created_by_name TEXT NOT NULL, created_by_email TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE run_items (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), position INTEGER NOT NULL, status TEXT NOT NULL, data_json TEXT NOT NULL, original_json TEXT NOT NULL);
+    CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor_name TEXT NOT NULL, actor_email TEXT NOT NULL, action TEXT NOT NULL);
+    INSERT INTO meta VALUES ('schema_version', '1');
+    INSERT INTO org_knowledge VALUES ('profile', 'profile', NULL, 't', 'b', NULL, '2026-01-01');
+    INSERT INTO runs VALUES ('r1', 'questionnaire', 'completed', '{}', 'x', 'a', 'a@b', '2026-01-01', '2026-01-01');
+    INSERT INTO run_items VALUES ('i1', 'r1', 0, 'approved', '{}', '{}');
+  `);
+  v1.close();
+
+  // Re-point the singleton at the v1 file and open it through the real path.
+  const { env } = await import("../lib/env");
+  const g = globalThis as { __grcaiDb?: { close(): void } };
+  g.__grcaiDb?.close();
+  g.__grcaiDb = undefined;
+  env.DATABASE_PATH = v1Path;
+  const db = getDb();
+  const count = (sql: string) => (db.prepare(sql).get() as { c: number }).c;
+  assert((db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string }).value === "2", "version not bumped");
+  assert(count("SELECT COUNT(*) c FROM documents") === DOCUMENTS.length, "not re-seeded");
+  assert(count("SELECT COUNT(*) c FROM runs") === 6, "demo runs not re-seeded");
+  assert(db.pragma("foreign_keys", { simple: true }) === 1, "foreign keys should be back on");
+});
+
 if (process.argv.includes("--live")) {
-  console.log("8. live Claude calls (--live)");
+  console.log("9. live Claude calls (--live)");
   if (!liveKey) {
     console.log("  skip: ANTHROPIC_API_KEY not set");
   } else {
