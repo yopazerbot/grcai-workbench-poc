@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { env } from "./env";
-import { DDL, SCHEMA_VERSION, TABLES } from "./schema";
+import { DDL, SCHEMA_VERSION } from "./schema";
 import { seedKnowledge } from "./seed/lumeo";
 import { seedDemoRuns } from "./seed/demo-runs";
 
@@ -32,8 +32,9 @@ export function getDb(): Database.Database {
   console.log(
     `[db] opened ${path} (journal=${JSON.stringify(db.pragma("journal_mode", { simple: true }))})`
   );
-  db.exec(DDL);
-  migrateIfNeeded(db);
+
+  ensureSchema(db);
+
   // The singleton must be set before seeding: seed modules call getDb().
   globalThis.__grcaiDb = db;
   seedIfEmpty(db);
@@ -42,18 +43,53 @@ export function getDb(): Database.Database {
 
 /**
  * Demo store, not a production database: a db created by an older schema
- * version is wiped and re-seeded rather than migrated in place.
+ * version is wiped and re-seeded rather than migrated in place. The version
+ * check MUST run before the DDL — the DDL's `CREATE INDEX IF NOT EXISTS` on
+ * new columns fails against old tables.
  */
-function migrateIfNeeded(db: Database.Database): void {
+function ensureSchema(db: Database.Database): void {
+  const version = storedSchemaVersion(db);
+  if (version !== null && version !== SCHEMA_VERSION) {
+    console.log(`[db] schema ${version} → ${SCHEMA_VERSION}: resetting demo database`);
+    dropAllTables(db);
+  }
+  try {
+    db.exec(DDL);
+  } catch (err) {
+    // A database of an unrecognised shape (e.g. created before versioning
+    // existed): reset it rather than leave the app unusable.
+    console.warn(
+      `[db] schema initialisation failed (${err instanceof Error ? err.message : String(err)}); resetting demo database`
+    );
+    dropAllTables(db);
+    db.exec(DDL);
+  }
+}
+
+/** null when the database is fresh (no meta table yet); "0" when meta exists without a version. */
+function storedSchemaVersion(db: Database.Database): string | null {
+  const meta = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'`)
+    .get();
+  if (!meta) {
+    const anyTable = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+      .get();
+    return anyTable ? "0" : null;
+  }
   const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as
     | { value: string }
     | undefined;
-  if (!row || row.value === SCHEMA_VERSION) return;
-  console.log(`[db] schema ${row.value} → ${SCHEMA_VERSION}: resetting demo database`);
+  return row?.value ?? "0";
+}
+
+function dropAllTables(db: Database.Database): void {
+  const tables = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+    .all() as Array<{ name: string }>;
   db.transaction(() => {
-    for (const t of TABLES) db.exec(`DROP TABLE IF EXISTS ${t}`);
+    for (const t of tables) db.exec(`DROP TABLE IF EXISTS "${t.name.replace(/"/g, '""')}"`);
   })();
-  db.exec(DDL);
 }
 
 function seedIfEmpty(db: Database.Database): void {
@@ -62,10 +98,10 @@ function seedIfEmpty(db: Database.Database): void {
   const docCount = (db.prepare("SELECT COUNT(*) AS c FROM documents").get() as { c: number }).c;
   if (docCount === 0) {
     seedKnowledge(db, now);
-    const meta = db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
-    meta.run("schema_version", SCHEMA_VERSION);
-    meta.run("seeded_at", now.toISOString());
   }
+  const meta = db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
+  meta.run("schema_version", SCHEMA_VERSION);
+  if (docCount === 0) meta.run("seeded_at", now.toISOString());
 
   const runCount = (db.prepare("SELECT COUNT(*) AS c FROM runs").get() as { c: number }).c;
   if (runCount === 0) {

@@ -113,7 +113,7 @@ npm run lint
 
 ## Troubleshooting
 
-- **`GET /api/health`** tells the layers apart: `200 {"status":"ok",...}` means app + database are fine; `500` names the database error; no response means the process itself is down — read the deploy logs.
+- **"An error occurred in the Server Components render"** (production builds hide the message) — almost always the database layer. Open **`GET /api/health`**: `200 {"status":"ok",...}` means app + database are fine; `500` names the database error; no response means the process itself is down — read the deploy logs.
 - On first database touch the server logs `[db] opened <path> (journal="delete")` — if that line is missing, no request has reached the database layer yet. A `[db] schema 1 → 2: resetting demo database` line means an older database was wiped and re-seeded.
 - **Uploads stay in "Awaiting analysis"** — no Claude key was available for that request. Add one via the user menu (or set `ANTHROPIC_API_KEY`) and press *Analyse*.
 - **A document shows "Failed"** — the error on the card says why (unreadable/scanned PDF, model refusal, rate limit). Fix the input or key and press *Re-analyse*.
