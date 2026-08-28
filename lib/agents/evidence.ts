@@ -48,7 +48,7 @@ export const evidenceAgent: AgentDefinition = {
     },
   ],
   inputSchema: z.object({ controls: z.string().trim().min(1) }),
-  sampleInput: { controls: "AFG-AC-02\nAFG-BC-02\nAFG-TP-01" },
+  sampleInput: { controls: "LUM-AC-02\nLUM-BC-02\nLUM-TP-01" },
   contextSections: ["profile", "control", "system_snapshot"],
   outputSchema,
   buildPrompt(input, orgContext) {

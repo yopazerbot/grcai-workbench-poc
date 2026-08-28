@@ -1,12 +1,11 @@
-import { UNCOVERED_CONTROL_NOTES } from "@/lib/seed/org-data";
+import { UNCOVERED_CONTROL_NOTES } from "@/lib/seed/lumeo/register";
+import { evidenceForControl, STALE_DAYS } from "@/lib/evidence-status";
+import { sourceLabel } from "@/lib/source-ref";
 import type { ControlRecord, OrgData } from "@/lib/org-context";
 
 // Deterministic evidence collector over the seeded connected-system
 // snapshots. Timestamps are the snapshots' real materialised dates, so
 // staleness findings are genuine, not scripted.
-
-const STALE_DAYS = 90;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function resolveControl(token: string, org: OrgData): ControlRecord | null {
   const t = token.trim().toLowerCase();
@@ -28,6 +27,8 @@ export function mockEvidence(input: Record<string, string>, org: OrgData): unkno
     .filter(Boolean)
     .slice(0, 25);
 
+  const registerLabel = org.controls[0] ? sourceLabel(org.controls[0]).split(",")[0] : "Control register";
+
   const items = tokens.map((token) => {
     const control = resolveControl(token, org);
     if (!control) {
@@ -37,23 +38,13 @@ export function mockEvidence(input: Record<string, string>, org: OrgData): unkno
         status: "missing" as const,
         evidence: [],
         gap_note: `"${token}" does not match any control in the register. Check the identifier or add the control before collecting evidence.`,
-        source_note: "Internal control register",
+        source_note: registerLabel,
       };
     }
 
-    const evidence = org.snapshots.flatMap((snap) =>
-      snap.entries
-        .filter((e) => e.controls.includes(control.id))
-        .map((e) => ({
-          description: e.description,
-          source_system: snap.system,
-          collected_at: e.collectedAt,
-          what_counts_note: e.whatCounts,
-          gap: e.gap,
-        }))
-    );
+    const ev = evidenceForControl(control.id, org.snapshots);
 
-    if (evidence.length === 0) {
+    if (ev.status === "missing") {
       return {
         control_id: control.id,
         control_name: control.name,
@@ -62,38 +53,26 @@ export function mockEvidence(input: Record<string, string>, org: OrgData): unkno
         gap_note:
           UNCOVERED_CONTROL_NOTES[control.id] ??
           "No connected system provides evidence for this control; evidence must be collected manually.",
-        source_note: "No connected system coverage",
+        source_note: `No connected system coverage; control defined in ${sourceLabel(control)}`,
       };
     }
 
-    const ages = evidence.map((e) =>
-      Math.floor((Date.now() - new Date(e.collected_at).getTime()) / DAY_MS)
-    );
-    const maxAge = Math.max(...ages);
-    const gaps = evidence.map((e) => e.gap).filter((g): g is string => Boolean(g));
-    const systems = [...new Set(evidence.map((e) => e.source_system))];
-
-    let status: "complete" | "partial" | "stale";
     let gap_note: string | null = null;
-    if (maxAge > STALE_DAYS) {
-      status = "stale";
-      gap_note = `Most recent relevant evidence is ${maxAge} days old (threshold: ${STALE_DAYS} days). Re-collect current-state evidence before the audit.${
-        gaps.length > 0 ? ` Also recorded: ${gaps.join(" ")}` : ""
+    if (ev.status === "stale") {
+      gap_note = `Most recent relevant evidence is ${ev.maxAgeDays} days old (threshold: ${STALE_DAYS} days). Re-collect current-state evidence before the audit.${
+        ev.gaps.length > 0 ? ` Also recorded: ${ev.gaps.join(" ")}` : ""
       }`;
-    } else if (gaps.length > 0) {
-      status = "partial";
-      gap_note = gaps.join(" ");
-    } else {
-      status = "complete";
+    } else if (ev.status === "partial") {
+      gap_note = ev.gaps.join(" ");
     }
 
     return {
       control_id: control.id,
       control_name: control.name,
-      status,
-      evidence: evidence.map(({ gap: _gap, ...e }) => e),
+      status: ev.status,
+      evidence: ev.evidence.map(({ gap: _gap, ...e }) => e),
       gap_note,
-      source_note: `Connected systems: ${systems.join(", ")}`,
+      source_note: `Connected systems: ${ev.systems.join(", ")}; control defined in ${sourceLabel(control)}`,
     };
   });
 

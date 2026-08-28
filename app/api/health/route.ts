@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
-import { llmConfigured } from "@/lib/env";
+import { envKeyConfigured } from "@/lib/env";
+import { SCHEMA_VERSION } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -9,14 +10,14 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const db = getDb();
-    const runs = (
-      db.prepare("SELECT COUNT(*) AS c FROM runs").get() as { c: number }
-    ).c;
+    const count = (sql: string) => (db.prepare(sql).get() as { c: number }).c;
     return Response.json({
       status: "ok",
       database: "ok",
-      runs,
-      engine: llmConfigured ? "claude" : "simulated",
+      schema: SCHEMA_VERSION,
+      runs: count("SELECT COUNT(*) AS c FROM runs"),
+      documents: count("SELECT COUNT(*) AS c FROM documents"),
+      engine: envKeyConfigured ? "claude (server key)" : "simulated (per-session keys accepted)",
       uptimeSeconds: Math.round(process.uptime()),
     });
   } catch (err) {

@@ -2,13 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Wand2 } from "lucide-react";
+import { FlaskConical, Sparkles, Wand2 } from "lucide-react";
 import { getAgent } from "@/lib/agents";
+import { llmHeaders, useSessionKey } from "@/lib/api-key-store";
+import { openKeyPanel } from "@/components/api-key-panel";
 import { Button, Card, Spinner } from "@/components/ui";
 
-export function NewRunForm({ agentId }: { agentId: string }) {
+export function NewRunForm({ agentId, serverKey }: { agentId: string; serverKey: boolean }) {
   const router = useRouter();
   const agent = useMemo(() => getAgent(agentId), [agentId]);
+  const [sessionKey] = useSessionKey();
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
     for (const f of agent?.inputFields ?? []) {
@@ -20,6 +23,8 @@ export function NewRunForm({ agentId }: { agentId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   if (!agent) return null;
+
+  const live = Boolean(sessionKey) || serverKey;
 
   const set = (name: string, value: string) =>
     setValues((v) => ({ ...v, [name]: value }));
@@ -36,7 +41,7 @@ export function NewRunForm({ agentId }: { agentId: string }) {
     try {
       const res = await fetch("/api/runs", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: llmHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ agentId: agent.id, input: values }),
       });
       const body = (await res.json()) as { runId?: string; error?: string };
@@ -111,7 +116,29 @@ export function NewRunForm({ agentId }: { agentId: string }) {
           <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="flex items-center gap-1.5 text-xs text-slate-500">
+            {live ? (
+              <>
+                <Sparkles className="size-3.5 text-teal-600" />
+                Drafted by Claude using {sessionKey ? "your session key" : "the server key"} and the
+                anchored knowledge base.
+              </>
+            ) : (
+              <>
+                <FlaskConical className="size-3.5" />
+                Simulated engine —{" "}
+                <button
+                  type="button"
+                  onClick={openKeyPanel}
+                  className="font-medium text-teal-700 hover:text-teal-800"
+                >
+                  add your Claude key
+                </button>{" "}
+                for live drafting.
+              </>
+            )}
+          </p>
           <Button type="submit" disabled={pending}>
             {pending ? <Spinner className="border-white/40 border-t-white" /> : <Sparkles className="size-4" />}
             {pending ? "Starting…" : "Draft"}

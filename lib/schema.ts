@@ -1,10 +1,44 @@
-// SQLite DDL, executed on every startup (idempotent).
+// SQLite DDL, executed on every startup (idempotent). Bump SCHEMA_VERSION when
+// the shape changes: the db layer wipes and re-seeds a database with an older
+// version (this is a demo store; run history is seed-derived and disposable).
+
+export const SCHEMA_VERSION = "2";
+
+export const TABLES = [
+  "audit_log",
+  "run_items",
+  "runs",
+  "org_knowledge",
+  "documents",
+  "meta",
+] as const;
 
 export const DDL = `
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  category TEXT NOT NULL DEFAULT 'other',
+  status TEXT NOT NULL DEFAULT 'awaiting_analysis',
+  text TEXT NOT NULL DEFAULT '',
+  summary TEXT,
+  page_count INTEGER,
+  error TEXT,
+  model TEXT,
+  uploaded_by_name TEXT NOT NULL,
+  uploaded_by_email TEXT NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  analysed_at TEXT,
+  seeded INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_documents_uploaded ON documents(uploaded_at DESC);
 
 CREATE TABLE IF NOT EXISTS org_knowledge (
   id TEXT PRIMARY KEY,
@@ -13,9 +47,12 @@ CREATE TABLE IF NOT EXISTS org_knowledge (
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   data_json TEXT,
+  document_id TEXT REFERENCES documents(id),
+  anchor TEXT,
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_org_cat ON org_knowledge(category);
+CREATE INDEX IF NOT EXISTS idx_org_doc ON org_knowledge(document_id);
 
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
@@ -60,6 +97,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   agent_id TEXT,
   run_id TEXT,
   item_id TEXT,
+  document_id TEXT,
   details_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);

@@ -8,16 +8,20 @@ export interface FrameworkRequirement {
   summary: string;
 }
 
+export type FrameworkKey = "iso27001" | "nis2" | "soc2";
+
 export interface Framework {
-  key: "iso27001" | "dora" | "nis2";
+  key: FrameworkKey;
   name: string;
+  shortName: string;
   requirements: FrameworkRequirement[];
 }
 
-export const FRAMEWORKS: Record<Framework["key"], Framework> = {
+export const FRAMEWORKS: Record<FrameworkKey, Framework> = {
   iso27001: {
     key: "iso27001",
     name: "ISO/IEC 27001:2022 (Annex A, selection)",
+    shortName: "ISO 27001",
     requirements: [
       { id: "A.5.1", title: "Policies for information security", summary: "An information security policy and topic-specific policies are defined, approved by management, communicated and reviewed at planned intervals." },
       { id: "A.5.9", title: "Inventory of information and other associated assets", summary: "An inventory of information and associated assets, including owners, is developed and maintained." },
@@ -40,32 +44,13 @@ export const FRAMEWORKS: Record<Framework["key"], Framework> = {
       { id: "A.8.25", title: "Secure development life cycle", summary: "Rules for the secure development of software and systems are established and applied." },
     ],
   },
-  dora: {
-    key: "dora",
-    name: "DORA (Regulation (EU) 2022/2554, selection)",
-    requirements: [
-      { id: "Art. 5", title: "Governance and organisation", summary: "The management body defines, approves and oversees the ICT risk management framework, allocates the ICT risk function, sets a reporting cadence and maintains sufficient ICT risk knowledge." },
-      { id: "Art. 6", title: "ICT risk management framework", summary: "A sound, comprehensive and documented ICT risk management framework — including risk appetite and tolerance for ICT disruptions — is maintained and reviewed at least yearly." },
-      { id: "Art. 8", title: "Identification", summary: "ICT-supported business functions, information assets and their dependencies — including those on third parties — are identified, classified and documented, mapped to critical or important functions." },
-      { id: "Art. 9", title: "Protection and prevention", summary: "ICT systems are continuously protected with policies, procedures and tools: security of networks, encryption, access management, patching and change control." },
-      { id: "Art. 10", title: "Detection", summary: "Anomalous activities and ICT-related incidents are promptly detected, with multiple layers of control, defined alert thresholds and automatic monitoring." },
-      { id: "Art. 11", title: "Response and recovery", summary: "An ICT business continuity policy with dedicated response and recovery plans is implemented, tested and reviewed, with defined recovery objectives per function." },
-      { id: "Art. 12", title: "Backup policies and restoration", summary: "Backup policies and restoration and recovery procedures and methods are established, with restoration tested periodically." },
-      { id: "Art. 13", title: "Learning and evolving", summary: "Lessons from incidents, tests and near-misses are captured and drive changes to the ICT risk framework, awareness and training." },
-      { id: "Art. 14", title: "Communication", summary: "Communication plans for ICT-related incidents exist towards clients, counterparts and the public, with assigned spokespersons and prepared disclosure." },
-      { id: "Art. 17", title: "ICT-related incident management process", summary: "A process to detect, manage, log and notify ICT-related incidents is defined and implemented, with early warning indicators and root-cause follow-up." },
-      { id: "Art. 18-19", title: "Classification and reporting of major incidents", summary: "Incidents are classified against the regulatory materiality criteria; major ICT-related incidents are reported to the competent authority via initial, intermediate and final reports within set timelines." },
-      { id: "Art. 24-26", title: "Digital operational resilience testing", summary: "A documented, risk-based resilience testing programme covers critical or important functions, including vulnerability assessments and — where designated — threat-led penetration testing (TLPT)." },
-      { id: "Art. 28", title: "ICT third-party risk and register of information", summary: "ICT third-party risk is managed across the lifecycle; a register of information on all ICT service arrangements is maintained and reported in the regulatory format." },
-      { id: "Art. 30", title: "Key contractual provisions", summary: "Contracts with ICT providers contain the mandated provisions: service descriptions, security requirements, audit and access rights, exit assistance and subcontracting conditions." },
-    ],
-  },
   nis2: {
     key: "nis2",
-    name: "NIS2 (Directive (EU) 2022/2555, Art. 21(2))",
+    name: "NIS2 (Directive (EU) 2022/2555, Art. 21(2) — Belgian NIS2 Act)",
+    shortName: "NIS2",
     requirements: [
       { id: "Art. 21(2)(a)", title: "Risk analysis and information system security policies", summary: "Policies on risk analysis and information system security are in place, with documented, system-level risk analyses." },
-      { id: "Art. 21(2)(b)", title: "Incident handling", summary: "Incident handling capabilities cover prevention, detection, analysis, containment, response and recovery." },
+      { id: "Art. 21(2)(b)", title: "Incident handling", summary: "Incident handling capabilities cover prevention, detection, analysis, containment, response and recovery — including the 24h/72h/1-month reporting duties towards the CCB." },
       { id: "Art. 21(2)(c)", title: "Business continuity and crisis management", summary: "Business continuity measures: backup management, disaster recovery and crisis management with assigned roles." },
       { id: "Art. 21(2)(d)", title: "Supply chain security", summary: "Security aspects of the relationships with direct suppliers and service providers are addressed, considering their vulnerabilities and practices." },
       { id: "Art. 21(2)(e)", title: "Security in acquisition, development and maintenance", summary: "Security in network and information systems acquisition, development and maintenance, including vulnerability handling and disclosure." },
@@ -76,4 +61,39 @@ export const FRAMEWORKS: Record<Framework["key"], Framework> = {
       { id: "Art. 21(2)(j)", title: "Multi-factor authentication and secured communications", summary: "Use of multi-factor or continuous authentication, secured voice/video/text communications and secured emergency communication systems." },
     ],
   },
+  soc2: {
+    key: "soc2",
+    name: "SOC 2 — Trust Services Criteria (Security, Availability, Confidentiality; selection)",
+    shortName: "SOC 2",
+    requirements: [
+      { id: "CC2.1", title: "Information to support internal control", summary: "The entity obtains or generates and uses relevant, quality information — including security policies and responsibilities communicated to personnel — to support the functioning of internal control." },
+      { id: "CC3.1", title: "Objectives and risk identification", summary: "The entity specifies objectives with sufficient clarity and identifies and analyses risks to their achievement, including a periodic risk assessment." },
+      { id: "CC4.1", title: "Monitoring of controls", summary: "The entity selects, develops and performs ongoing and/or separate evaluations (internal audits, control monitoring) to ascertain whether controls are present and functioning." },
+      { id: "CC5.3", title: "Policies and procedures", summary: "The entity deploys control activities through policies that establish what is expected and procedures that put policies into action." },
+      { id: "CC6.1", title: "Logical access security architecture", summary: "Logical access security software, infrastructure and architectures are implemented over protected information assets, including identification, authentication and encryption of data at rest." },
+      { id: "CC6.2", title: "User registration and authorisation", summary: "New internal and external users are registered and authorised before being issued credentials; access is removed when no longer required." },
+      { id: "CC6.3", title: "Access modification and removal", summary: "Access to data, software and infrastructure is authorised, modified or removed based on roles and least privilege, with periodic review." },
+      { id: "CC6.6", title: "Boundary protection against external threats", summary: "Logical access security measures protect against threats from sources outside the system boundaries (firewalls, WAF, intrusion detection)." },
+      { id: "CC6.7", title: "Restriction and encryption of data transmission", summary: "The transmission, movement and removal of information is restricted to authorised users and processes and protected during transmission." },
+      { id: "CC6.8", title: "Prevention and detection of malicious software", summary: "Controls prevent or detect and act upon the introduction of unauthorised or malicious software." },
+      { id: "CC7.1", title: "Vulnerability and configuration change detection", summary: "Detection and monitoring procedures identify changes to configurations that introduce vulnerabilities, and newly discovered vulnerabilities." },
+      { id: "CC7.2", title: "Anomaly monitoring", summary: "System components and their operation are monitored for anomalies indicative of malicious acts, natural disasters and errors; anomalies are analysed as potential security events." },
+      { id: "CC7.3", title: "Security event evaluation", summary: "Identified security events are evaluated to determine whether they could or have resulted in a failure to meet objectives (security incidents), and if so, actions are taken." },
+      { id: "CC7.4", title: "Incident response", summary: "The entity responds to identified security incidents by executing a defined incident response programme to understand, contain, remediate and communicate." },
+      { id: "CC7.5", title: "Recovery from incidents", summary: "The entity identifies, develops and implements activities to recover from identified security incidents." },
+      { id: "CC8.1", title: "Change management", summary: "Changes to infrastructure, data, software and procedures are authorised, designed, developed, configured, documented, tested, approved and implemented to meet objectives." },
+      { id: "CC9.1", title: "Risk mitigation for business disruption", summary: "Risk mitigation activities address potential business disruptions, including business continuity planning." },
+      { id: "CC9.2", title: "Vendor and business partner risk", summary: "The entity assesses and manages risks associated with vendors and business partners, including contractual security commitments and periodic assessment." },
+      { id: "A1.2", title: "Environmental protections, backup and recovery infrastructure", summary: "Environmental protections, software, data backup processes and recovery infrastructure are authorised, designed, developed, implemented, operated, monitored and maintained to meet availability objectives." },
+      { id: "A1.3", title: "Recovery plan testing", summary: "Recovery plan procedures supporting system recovery are tested to help meet availability objectives." },
+      { id: "C1.1", title: "Identification and protection of confidential information", summary: "Confidential information is identified and maintained (classified, handled and protected) to meet confidentiality objectives." },
+      { id: "C1.2", title: "Disposal of confidential information", summary: "Confidential information is disposed of to meet the entity's objectives related to confidentiality (retention and deletion)." },
+    ],
+  },
 };
+
+export const FRAMEWORK_LIST: Framework[] = Object.values(FRAMEWORKS);
+
+export function isFrameworkKey(key: string): key is FrameworkKey {
+  return key in FRAMEWORKS;
+}

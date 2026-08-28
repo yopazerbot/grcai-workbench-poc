@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FRAMEWORKS, type Framework } from "@/lib/frameworks";
+import { FRAMEWORKS, FRAMEWORK_LIST, isFrameworkKey, type Framework } from "@/lib/frameworks";
 import { baseSystemPrompt, type AgentDefinition } from "./types";
 
 const itemSchema = z.object({
@@ -19,7 +19,8 @@ type Item = z.infer<typeof itemSchema>;
 const COVERAGE_TONE = { full: "green", partial: "amber", none: "red" } as const;
 
 export function frameworkFromInput(input: Record<string, string>): Framework {
-  return FRAMEWORKS[(input.framework as Framework["key"]) ?? "iso27001"] ?? FRAMEWORKS.iso27001;
+  const key = input.framework ?? "";
+  return isFrameworkKey(key) ? FRAMEWORKS[key] : FRAMEWORKS.iso27001;
 }
 
 function renderCatalog(framework: Framework): string {
@@ -41,14 +42,10 @@ export const controlMapperAgent: AgentDefinition = {
       name: "framework",
       label: "Target framework",
       type: "select",
-      options: [
-        { value: "iso27001", label: "ISO/IEC 27001:2022 (Annex A)" },
-        { value: "dora", label: "DORA" },
-        { value: "nis2", label: "NIS2 (Art. 21)" },
-      ],
+      options: FRAMEWORK_LIST.map((f) => ({ value: f.key, label: f.name.split(" (")[0] + (f.key === "soc2" ? " (Trust Services Criteria)" : f.key === "nis2" ? " (Art. 21)" : " (Annex A)") })),
     },
   ],
-  inputSchema: z.object({ framework: z.enum(["iso27001", "dora", "nis2"]) }),
+  inputSchema: z.object({ framework: z.enum(["iso27001", "nis2", "soc2"]) }),
   sampleInput: { framework: "nis2" },
   contextSections: ["profile", "certification", "control"],
   outputSchema,
@@ -60,10 +57,10 @@ export const controlMapperAgent: AgentDefinition = {
         `Map the internal control register to ${framework.name}.
 - Produce exactly one item per requirement in <framework_requirements>, in catalog order, copying requirement_id and requirement_title verbatim.
 - "covering_controls" lists internal control IDs from the register (may be empty). Never invent control IDs.
-- Judge "coverage" strictly: "full" only when the control set clearly satisfies the requirement's intent; "partial" when scope, frequency or formalisation falls short; "none" when no control addresses it.
-- "rationale" cites both sides in 1-3 sentences: what the requirement asks and what the mapped controls do (or lack).
+- Judge "coverage" strictly: "full" only when the control set clearly satisfies the requirement's intent; "partial" when scope, frequency or formalisation falls short (use the controls' status and description — a control "in_remediation" rarely gives full coverage); "none" when no control addresses it.
+- "rationale" cites both sides in 1-3 sentences: what the requirement asks and what the mapped controls do (or lack), with concrete facts from the context.
 - For "partial" and "none", "gap_note" states what is missing and a suggested remediation direction. Null for "full".
-- "source_note" is "Internal control register + ${framework.name}".`
+- "source_note" names the control register document from the context (as given in its [source: …] tag) followed by " + ${framework.name}".`
       ),
       user: `Produce the coverage mapping for ${framework.name}.`,
     };
@@ -105,7 +102,7 @@ export const controlMapperAgent: AgentDefinition = {
   ],
   itemSchema,
   inputSummary(input) {
-    return `Coverage matrix · ${frameworkFromInput(input).name.split(" (")[0]}`;
+    return `Coverage matrix · ${frameworkFromInput(input).shortName}`;
   },
   exportMarkdown(items, run) {
     const lines = [

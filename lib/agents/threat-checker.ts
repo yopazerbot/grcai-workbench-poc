@@ -38,15 +38,15 @@ const EXPOSURE_LABEL = {
 } as const;
 const PRIORITY_TONE = { p1: "red", p2: "amber", p3: "slate" } as const;
 
-const SAMPLE_ADVISORY = `Security advisory AV-2026-0412 (TLP:CLEAR)
+const SAMPLE_ADVISORY = `CCB Advisory 2026-0812 (TLP:CLEAR) — Centre for Cybersecurity Belgium
 
-A critical vulnerability (CVE-2026-31337, CVSS 9.1) in PostgreSQL 15.x before 15.10 allows authenticated database users to escalate privileges via crafted extension scripts. Active exploitation has been observed in the wild since 4 August.
+A critical vulnerability (CVE-2026-41337, CVSS 9.1) in PostgreSQL 16.x before 16.5 allows authenticated database users to escalate privileges to superuser via crafted extension scripts. Active exploitation has been observed in the wild since 9 August 2026.
 
 Affected products:
-- PostgreSQL 15.0 through 15.9, all platforms, including managed cloud offerings where extension creation is permitted.
-- Citrix NetScaler ADC 14.1 builds before 14.1-25.53 are affected by a related pre-auth issue (see separate advisory AV-2026-0413).
+- PostgreSQL 16.0 through 16.4 on all platforms, including managed offerings such as Azure Database for PostgreSQL Flexible Server where extension creation is permitted to application roles.
+- Citrix NetScaler ADC 14.1 builds before 14.1-25.53 are affected by a related pre-authentication issue (see separate advisory 2026-0813).
 
-Remediation: upgrade to PostgreSQL 15.10 / 16.6 or later. As an interim mitigation, revoke CREATE EXTENSION from non-administrative roles and review extension creation logs for anomalies.`;
+Remediation: upgrade to PostgreSQL 16.5 or later. As an interim mitigation, revoke CREATE EXTENSION from non-administrative roles and review extension creation logs for anomalies.`;
 
 export const threatCheckerAgent: AgentDefinition = {
   id: "threat-checker",
@@ -66,7 +66,7 @@ export const threatCheckerAgent: AgentDefinition = {
   ],
   inputSchema: z.object({ advisory: z.string().trim().min(1) }),
   sampleInput: { advisory: SAMPLE_ADVISORY },
-  contextSections: ["profile", "assets", "control", "system_snapshot"],
+  contextSections: ["profile", "asset", "control", "system_snapshot"],
   outputSchema,
   buildPrompt(input, orgContext) {
     return {

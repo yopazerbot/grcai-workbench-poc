@@ -3,20 +3,24 @@ import { logAudit } from "./audit";
 import { getRunDetail, insertRunItems, setRunFailed, setRunReview } from "./data";
 import { draft } from "./drafter";
 import { AgentRunError } from "./errors";
-import type { Actor } from "./types";
+import type { Actor, EngineSource } from "./types";
 
 const agentActor = (agentName: string): Actor => ({
   name: `${agentName} (agent)`,
-  email: "agents@grcai.app",
+  email: "agents@lumeo.be",
 });
 
 /**
  * Background drafting pipeline: drafting → review (or failed). Fired
  * fire-and-forget from POST /api/runs — safe on a persistent Node server.
+ * `apiKey` is held in memory for the duration of this call only.
  * Note for dev mode: an HMR restart mid-call orphans this promise; the
  * stale-drafting failsafe in GET /api/runs/[runId] covers that case.
  */
-export async function processRun(runId: string): Promise<void> {
+export async function processRun(
+  runId: string,
+  engine: { apiKey: string | null; source: EngineSource }
+): Promise<void> {
   const run = getRunDetail(runId);
   if (!run || run.status !== "drafting") return;
 
@@ -27,7 +31,7 @@ export async function processRun(runId: string): Promise<void> {
   }
 
   try {
-    const result = await draft(agent, run.input);
+    const result = await draft(agent, run.input, engine.apiKey);
     if (result.items.length === 0) {
       throw new AgentRunError("The draft came back empty — adjust the input and retry.");
     }
@@ -49,7 +53,12 @@ export async function processRun(runId: string): Promise<void> {
     logAudit(agentActor(agent.name), "run_drafts_created", {
       agentId: agent.id,
       runId,
-      details: { count: result.items.length, flagged: flaggedCount, model: result.model },
+      details: {
+        count: result.items.length,
+        flagged: flaggedCount,
+        model: result.model,
+        engine: engine.source,
+      },
     });
   } catch (err) {
     const message =
@@ -61,7 +70,7 @@ export async function processRun(runId: string): Promise<void> {
     logAudit(agentActor(agent.name), "run_failed", {
       agentId: agent.id,
       runId,
-      details: { error: message },
+      details: { error: message, engine: engine.source },
     });
   }
 }

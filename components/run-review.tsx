@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, Copy, Download, FlaskConical, TriangleAlert } from "lucide-react";
+import { Check, Copy, Download, FlaskConical, Sparkles, TriangleAlert } from "lucide-react";
 import { getAgent } from "@/lib/agents";
 import { formatRelative } from "@/lib/format";
 import type { ItemView, RunDetail, RunSummary } from "@/lib/types";
@@ -137,12 +137,17 @@ export function RunReview({ initialRun, initialItems }: Props) {
           </span>
           <span className="text-sm font-medium text-slate-600">{agent.name}</span>
           <RunStatusPill status={run.status} />
-          {run.model === "simulated" && (
+          {run.model === "simulated" ? (
             <Badge tone="slate">
               <FlaskConical className="size-3" />
               Simulated
             </Badge>
-          )}
+          ) : run.model ? (
+            <Badge tone="teal">
+              <Sparkles className="size-3" />
+              Claude · {run.model}
+            </Badge>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

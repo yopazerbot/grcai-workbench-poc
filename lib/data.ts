@@ -7,6 +7,7 @@ import type {
   ItemView,
   RunCounts,
   RunDetail,
+  RunStatus,
   RunSummary,
 } from "./types";
 
@@ -62,6 +63,7 @@ interface AuditRow {
   agent_id: string | null;
   run_id: string | null;
   item_id: string | null;
+  document_id: string | null;
   details_json: string | null;
 }
 
@@ -75,6 +77,9 @@ const COUNTS_JOIN = `
       SUM(CASE WHEN flagged = 1 THEN 1 ELSE 0 END) AS c_flagged
     FROM run_items GROUP BY run_id
   ) c ON c.run_id = r.id`;
+
+const RUN_SELECT = `SELECT r.*, c.c_total, c.c_draft, c.c_approved, c.c_rejected, c.c_flagged
+  FROM runs r ${COUNTS_JOIN}`;
 
 function mapCounts(row: RunRowWithCounts): RunCounts {
   return {
@@ -99,6 +104,10 @@ function mapRunSummary(row: RunRowWithCounts): RunSummary {
     completedAt: row.completed_at,
     counts: mapCounts(row),
   };
+}
+
+function mapRunDetail(row: RunRowWithCounts): RunDetail {
+  return { ...mapRunSummary(row), input: JSON.parse(row.input_json) as Record<string, string> };
 }
 
 function mapItem(row: ItemRow): ItemView {
@@ -147,28 +156,49 @@ export function createRun(opts: {
 }
 
 export function getRunDetail(id: string): RunDetail | null {
-  const row = getDb()
-    .prepare(`SELECT r.*, c.c_total, c.c_draft, c.c_approved, c.c_rejected, c.c_flagged
-              FROM runs r ${COUNTS_JOIN} WHERE r.id = ?`)
-    .get(id) as RunRowWithCounts | undefined;
-  if (!row) return null;
-  return {
-    ...mapRunSummary(row),
-    input: JSON.parse(row.input_json) as Record<string, string>,
-  };
+  const row = getDb().prepare(`${RUN_SELECT} WHERE r.id = ?`).get(id) as RunRowWithCounts | undefined;
+  return row ? mapRunDetail(row) : null;
 }
 
-export function listRuns(opts: { agentId?: string; limit?: number; offset?: number } = {}): RunSummary[] {
+export function listRuns(
+  opts: { agentId?: string; status?: RunStatus[]; limit?: number; offset?: number } = {}
+): RunSummary[] {
   const limit = Math.min(opts.limit ?? 50, 200);
   const offset = opts.offset ?? 0;
-  const where = opts.agentId ? "WHERE r.agent_id = ?" : "";
-  const params: unknown[] = opts.agentId ? [opts.agentId, limit, offset] : [limit, offset];
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (opts.agentId) {
+    where.push("r.agent_id = ?");
+    params.push(opts.agentId);
+  }
+  if (opts.status && opts.status.length > 0) {
+    where.push(`r.status IN (${opts.status.map(() => "?").join(", ")})`);
+    params.push(...opts.status);
+  }
   const rows = getDb()
-    .prepare(`SELECT r.*, c.c_total, c.c_draft, c.c_approved, c.c_rejected, c.c_flagged
-              FROM runs r ${COUNTS_JOIN} ${where}
-              ORDER BY r.created_at DESC LIMIT ? OFFSET ?`)
-    .all(...params) as RunRowWithCounts[];
+    .prepare(
+      `${RUN_SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY r.created_at DESC LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset) as RunRowWithCounts[];
   return rows.map(mapRunSummary);
+}
+
+/** Latest run of an agent whose JSON input has `input.<key> == value` (e.g. the newest DORA mapping). */
+export function getLatestRunForInput(
+  agentId: string,
+  key: string,
+  value: string,
+  statuses: RunStatus[] = ["review", "completed"]
+): RunDetail | null {
+  const row = getDb()
+    .prepare(
+      `${RUN_SELECT} WHERE r.agent_id = ? AND json_extract(r.input_json, ?) = ?
+         AND r.status IN (${statuses.map(() => "?").join(", ")})
+       ORDER BY r.created_at DESC LIMIT 1`
+    )
+    .get(agentId, `$.${key}`, value, ...statuses) as RunRowWithCounts | undefined;
+  return row ? mapRunDetail(row) : null;
 }
 
 export function setRunReview(
@@ -303,18 +333,62 @@ export function bulkApproveItems(runId: string, itemIds: string[], actor: Actor)
 }
 
 // ---------------------------------------------------------------------------
+// Aggregates (dashboard)
+
+export interface WorkQueueCounts {
+  runsInReview: number;
+  draftItems: number;
+  flaggedDrafts: number;
+  runsTotal: number;
+  runsCompleted: number;
+  itemsApproved: number;
+  itemsRejected: number;
+  itemsEdited: number;
+}
+
+export function getWorkQueueCounts(): WorkQueueCounts {
+  const db = getDb();
+  const one = (sql: string) => (db.prepare(sql).get() as { c: number }).c;
+  return {
+    runsInReview: one(`SELECT COUNT(*) AS c FROM runs WHERE status = 'review'`),
+    draftItems: one(
+      `SELECT COUNT(*) AS c FROM run_items i JOIN runs r ON r.id = i.run_id WHERE i.status = 'draft' AND r.status = 'review'`
+    ),
+    flaggedDrafts: one(
+      `SELECT COUNT(*) AS c FROM run_items i JOIN runs r ON r.id = i.run_id WHERE i.status = 'draft' AND i.flagged = 1 AND r.status = 'review'`
+    ),
+    runsTotal: one(`SELECT COUNT(*) AS c FROM runs`),
+    runsCompleted: one(`SELECT COUNT(*) AS c FROM runs WHERE status = 'completed'`),
+    itemsApproved: one(`SELECT COUNT(*) AS c FROM run_items WHERE status = 'approved'`),
+    itemsRejected: one(`SELECT COUNT(*) AS c FROM run_items WHERE status = 'rejected'`),
+    itemsEdited: one(`SELECT COUNT(*) AS c FROM run_items WHERE edited_at IS NOT NULL`),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Audit
 
-export function listAudit(opts: { limit?: number; offset?: number; runId?: string } = {}): AuditView[] {
+export function listAudit(
+  opts: { limit?: number; offset?: number; runId?: string; documentId?: string } = {}
+): AuditView[] {
   const limit = Math.min(opts.limit ?? 100, 500);
   const offset = opts.offset ?? 0;
-  const where = opts.runId ? "WHERE run_id = ?" : "";
-  const params: unknown[] = opts.runId ? [opts.runId, limit, offset] : [limit, offset];
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (opts.runId) {
+    where.push("run_id = ?");
+    params.push(opts.runId);
+  }
+  if (opts.documentId) {
+    where.push("document_id = ?");
+    params.push(opts.documentId);
+  }
   const rows = getDb()
     .prepare(
-      `SELECT * FROM audit_log ${where} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`
+      `SELECT * FROM audit_log ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`
     )
-    .all(...params) as AuditRow[];
+    .all(...params, limit, offset) as AuditRow[];
   return rows.map((r) => ({
     id: r.id,
     ts: r.ts,
@@ -323,12 +397,13 @@ export function listAudit(opts: { limit?: number; offset?: number; runId?: strin
     agentId: r.agent_id as AgentId | null,
     runId: r.run_id,
     itemId: r.item_id,
+    documentId: r.document_id,
     details: r.details_json ? (JSON.parse(r.details_json) as Record<string, unknown>) : null,
   }));
 }
 
 // ---------------------------------------------------------------------------
-// Org knowledge
+// Org knowledge (raw rows; typed access lives in org-context.ts)
 
 export interface OrgKnowledgeRow {
   id: string;
@@ -337,18 +412,22 @@ export interface OrgKnowledgeRow {
   title: string;
   body: string;
   data: unknown;
+  documentId: string | null;
+  documentTitle: string | null;
+  anchor: string | null;
+  updatedAt: string;
 }
 
 export function getOrgRows(categories?: string[]): OrgKnowledgeRow[] {
   const db = getDb();
+  const base = `SELECT k.*, d.title AS document_title
+                FROM org_knowledge k LEFT JOIN documents d ON d.id = k.document_id`;
   const rows = (
     categories && categories.length > 0
       ? db
-          .prepare(
-            `SELECT * FROM org_knowledge WHERE category IN (${categories.map(() => "?").join(", ")}) ORDER BY category, id`
-          )
+          .prepare(`${base} WHERE k.category IN (${categories.map(() => "?").join(", ")}) ORDER BY k.category, k.id`)
           .all(...categories)
-      : db.prepare(`SELECT * FROM org_knowledge ORDER BY category, id`).all()
+      : db.prepare(`${base} ORDER BY k.category, k.id`).all()
   ) as Array<{
     id: string;
     category: string;
@@ -356,6 +435,10 @@ export function getOrgRows(categories?: string[]): OrgKnowledgeRow[] {
     title: string;
     body: string;
     data_json: string | null;
+    document_id: string | null;
+    document_title: string | null;
+    anchor: string | null;
+    updated_at: string;
   }>;
   return rows.map((r) => ({
     id: r.id,
@@ -364,5 +447,24 @@ export function getOrgRows(categories?: string[]): OrgKnowledgeRow[] {
     title: r.title,
     body: r.body,
     data: r.data_json ? JSON.parse(r.data_json) : null,
+    documentId: r.document_id,
+    documentTitle: r.document_title,
+    anchor: r.anchor,
+    updatedAt: r.updated_at,
   }));
+}
+
+export function getMeta(key: string): string | null {
+  const row = getDb().prepare(`SELECT value FROM meta WHERE key = ?`).get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+export function setMeta(key: string, value: string): void {
+  getDb().prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`).run(key, value);
+}
+
+export function getOrgName(): string {
+  return getMeta("org_name") ?? "the organisation";
 }

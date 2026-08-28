@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getAgent } from "@/lib/agents";
 import { logAudit } from "@/lib/audit";
 import { createRun, listRuns } from "@/lib/data";
+import { resolveApiKey } from "@/lib/llm/key";
 import { getActor } from "@/lib/session";
 import { processRun } from "@/lib/run-processor";
 
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Session key (browser header) > server env key > simulated. Held in memory
+  // for this request and the background drafting call only.
+  const engine = resolveApiKey(req.headers);
+
   const runId = crypto.randomUUID();
   const input = parsedInput.data;
   createRun({
@@ -39,13 +44,15 @@ export async function POST(req: NextRequest) {
   logAudit(actor, "run_started", {
     agentId: agent.id,
     runId,
-    details: { inputSummary: agent.inputSummary(input) },
+    details: { inputSummary: agent.inputSummary(input), engine: engine.source },
   });
 
   // Fire-and-forget: the run page polls for progress.
-  processRun(runId).catch((err) => console.error(`[run ${runId}] processor crashed`, err));
+  processRun(runId, { apiKey: engine.apiKey, source: engine.source }).catch((err) =>
+    console.error(`[run ${runId}] processor crashed`, err)
+  );
 
-  return NextResponse.json({ runId }, { status: 201 });
+  return NextResponse.json({ runId, engine: engine.source }, { status: 201 });
 }
 
 export async function GET(req: NextRequest) {

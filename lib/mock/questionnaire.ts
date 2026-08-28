@@ -1,8 +1,12 @@
+import { sourceLabel } from "@/lib/source-ref";
 import type { OrgData, QaRecord } from "@/lib/org-context";
 
 // Input-aware simulated generator: splits the actually-pasted questions and
-// answers each from the seeded knowledge base via keyword matching. Unmatched
-// questions become "unsure" items — mirroring the live agent's behaviour.
+// answers each from the seeded knowledge base via keyword matching. Answers
+// come from past questionnaire responses first, then from the control
+// register, policies and certification facts — every answer carries the
+// document it was anchored to. Unmatched questions become "unsure" items,
+// mirroring the live agent's behaviour.
 
 export function splitQuestions(text: string): string[] {
   const lines = text
@@ -53,135 +57,145 @@ type Rule = { test: RegExp; build: (org: OrgData) => MatchResult | null };
 const qa = (org: OrgData, id: string): QaRecord | undefined =>
   org.qaPairs.find((q) => q.id === id);
 
+/** Reuse a past questionnaire answer, cited to its response document. */
 const fromQa =
   (id: string) =>
   (org: OrgData): MatchResult | null => {
     const pair = qa(org, id);
-    return pair ? { answer: pair.answer, source: `Past answer — ${pair.source}` } : null;
+    return pair ? { answer: pair.answer, source: sourceLabel(pair, pair.source) } : null;
   };
 
-const control = (org: OrgData, id: string) => org.controls.find((c) => c.id === id);
+/** Ground a drafted answer in a control from the register. */
+const fromControl =
+  (id: string, answer: string) =>
+  (org: OrgData): MatchResult | null => {
+    const c = org.controls.find((x) => x.id === id);
+    return c ? { answer, source: `${c.id} — ${c.name} (${sourceLabel(c)})` } : null;
+  };
 
+/** Ground a drafted answer in a policy from the policy set. */
+const fromPolicy =
+  (id: string, answer: string) =>
+  (org: OrgData): MatchResult | null => {
+    const p = org.policies.find((x) => x.id === id);
+    if (!p) return null;
+    const label = sourceLabel(p, "");
+    // The source document is usually the policy itself — don't repeat its name.
+    return {
+      answer,
+      source: label.startsWith(p.name) ? label : `${p.name} v${p.version} (${label || "Knowledge base"})`,
+    };
+  };
+
+/** Ground a drafted answer in a certification / regulatory-scope fact. */
+const fromCertification =
+  (namePattern: RegExp, answer: (status: string, scope: string) => string) =>
+  (org: OrgData): MatchResult | null => {
+    const c = org.certifications.find((x) => namePattern.test(x.name));
+    return c ? { answer: answer(c.status, c.scope), source: `${c.name} (${sourceLabel(c)})` } : null;
+  };
+
+// Ordered: specific patterns first, generic ones last.
 const RULES: Rule[] = [
+  { test: /soc\s*2|soc2|ssae\s*18|isae\s*3402/i, build: fromQa("qa-soc2") },
   {
-    test: /soc\s*2/i,
-    build: () => ({
-      answer:
-        "No — we do not hold a SOC 2 Type II report. Client assurance is provided via our ISO/IEC 27001:2022 certificate, the Statement of Applicability and an annual bridge letter, available under NDA.",
-      source: "Certifications & regulatory scope",
-    }),
+    test: /nis\s*2|nis2|cyber\s*fundamentals|cyfun/i,
+    build: fromCertification(
+      /nis2/i,
+      (status, scope) =>
+        `Yes — Lumeo Software NV is in scope of NIS2 as an important entity under the Belgian NIS2 Act. ${scope}. ${status}. Our incident response process implements the 24-hour early warning, 72-hour notification and one-month final report duties towards the CCB.`
+    ),
   },
-  { test: /iso\s*\/?\s*(iec\s*)?27001|certif/i, build: fromQa("qa-iso") },
-  { test: /\bmfa\b|multi[- ]?factor|two[- ]?factor|\b2fa\b/i, build: fromQa("qa-mfa") },
+  { test: /iso\s*\/?\s*(iec\s*)?27001|certif|statement of applicability|\bsoa\b/i, build: fromQa("qa-iso") },
+  { test: /art(icle|\.)?\s*30|contractual (provisions|clauses)|key contractual|contract(ual)? (terms|requirements)/i, build: fromQa("qa-audit-rights") },
+  { test: /audit rights|right to audit|access rights.{0,40}(authorit|auditor)|competent authorit|regulator.{0,30}access/i, build: fromQa("qa-audit-rights") },
   {
-    test: /encrypt|cryptograph/i,
-    build: (org) => {
-      const pair = qa(org, "qa-encryption-rest");
-      if (!pair) return null;
-      return {
-        answer: `${pair.answer} In transit, all external and internal service traffic uses TLS 1.2 or higher (TLS 1.3 where supported) with HSTS on public endpoints.`,
-        source: `Past answer — ${pair.source}; Control AFG-CR-01 — Encryption in transit`,
-      };
-    },
+    test: /access review|recertif|access rights|user access|joiner|leaver|revok|deprovision/i,
+    build: fromQa("qa-access-reviews"),
   },
-  { test: /penetration|pen[- ]?test/i, build: fromQa("qa-pentest") },
+  { test: /\bexit\b|termination.{0,40}(data|return|deletion)|data return|deletion of.{0,20}data|return of.{0,20}data/i, build: fromQa("qa-exit") },
+  { test: /sub[- ]?contract|outsourc/i, build: fromQa("qa-subcontracting") },
   {
-    test: /residen|where.{0,30}(data|hosted|stored|processed)|data.{0,20}(locat|hosted|stored)|hosting location|\beea\b/i,
-    build: fromQa("qa-data-location"),
+    test: /sub[- ]?processor|hosted|hosting|data (centre|center) location|where.{0,40}(data|stored|processed)|residen|\beea\b|\beu\b.{0,20}(data|host|region)|country|region/i,
+    build: fromQa("qa-hosting"),
   },
-  { test: /sub[- ]?processor/i, build: fromQa("qa-subprocessors") },
+  { test: /encrypt|cryptograph|key management|\bkeys?\b.{0,20}(manag|rotat)/i, build: fromQa("qa-encryption") },
+  { test: /\bmfa\b|multi[- ]?factor|two[- ]?factor|\b2fa\b|passkey|fido/i, build: fromQa("qa-mfa") },
   {
-    test: /(incident|breach).{0,40}(notif|report|inform)|notif.{0,40}(incident|breach)/i,
+    test: /privileged|admin(istrator)? access|\bpim\b|just[- ]in[- ]time|break[- ]?glass/i,
+    build: fromControl(
+      "LUM-AC-03",
+      "Privileged roles in Entra ID and Azure are eligible-only and activated just-in-time through Privileged Identity Management, with approval, a documented justification and a maximum window of four hours; permanent privileged assignments are not permitted. Two break-glass accounts are stored offline, excluded from conditional access and monitored for any use. Privileged access is recertified quarterly alongside standard access."
+    ),
+  },
+  {
+    test: /incident.{0,60}(notif|report|inform|communicat)|notif.{0,40}(incident|breach)|breach notification|major (ict[- ]related )?incident/i,
     build: fromQa("qa-incident-notification"),
   },
   {
-    test: /incident response|security incident/i,
-    build: (org) => {
-      const c = control(org, "AFG-IR-01");
-      return c
-        ? {
-            answer:
-              "Yes — we operate a documented incident response plan with a severity matrix, 24/7 on-call rota and defined escalation and notification paths (including DORA major-incident reporting). Post-incident reviews are mandatory for high-severity incidents and an annual tabletop exercise is performed.",
-            source: `Control ${c.id} — ${c.name}`,
-          }
-        : null;
-    },
+    test: /incident (response|management|handling)|security incident|handle.{0,20}incident/i,
+    build: fromControl(
+      "LUM-IR-01",
+      "Yes — we operate a documented Incident Response Plan (v2.1) with a severity matrix (S1–S4), named roles (incident manager, communications, DPO), 24/7 on-call escalation and evidence handling. Affected customers are notified within 24 hours; NIS2 reporting to the CCB follows the 24h/72h/1-month clock and GDPR breach notification the 72-hour rule. Post-incident reviews are mandatory for S1/S2 incidents and an annual tabletop exercise is performed."
+    ),
+  },
+  { test: /backup|disaster|recovery|\brto\b|\brpo\b|continuity|failover/i, build: fromQa("qa-backup-dr") },
+  { test: /penetration|pen[- ]?test|ethical hack|red team/i, build: fromQa("qa-pentest") },
+  { test: /vulnerab|patch|remediation (sla|timeline)/i, build: fromQa("qa-vuln-sla") },
+  { test: /\blog(ging|s)?\b|siem|security monitoring|monitor/i, build: fromQa("qa-logging") },
+  { test: /training|awareness|phishing simulation/i, build: fromQa("qa-training") },
+  { test: /\bdpo\b|gdpr|data protection officer|personal data|privacy|data subject/i, build: fromQa("qa-gdpr") },
+  { test: /sdlc|secure (software )?development|code review|devsecops|secure coding/i, build: fromQa("qa-sdlc") },
+  { test: /screening|background check|vetting|criminal record/i, build: fromQa("qa-screening") },
+  { test: /physical|data cent(re|er)|office security|badge/i, build: fromQa("qa-physical") },
+  {
+    test: /change (management|control)|release management|deployment approval/i,
+    build: fromControl(
+      "LUM-SD-02",
+      "Yes — every production change is recorded as a Jira change ticket linked to its pull request, risk-classified and approved by the service owner before deployment. Emergency changes are approved by the on-call lead and reviewed within two working days. Customer-visible changes are announced through the release notes."
+    ),
   },
   {
-    test: /backup|disaster|recovery|\brto\b|\brpo\b|continuity/i,
-    build: fromQa("qa-backup-dr"),
+    test: /classif|retention|data (deletion|disposal|lifecycle)/i,
+    build: fromControl(
+      "LUM-DP-01",
+      "Data is classified as Public, Internal, Confidential or Restricted and handled per the Data Protection Policy; customer contract data is Restricted. Retention follows the documented schedule: customer data is deleted within 90 days of contract termination unless legally retained, with backups expiring within a further 35 days."
+    ),
   },
   {
-    test: /access review|recertif|access rights|user access|joiner|leaver/i,
-    build: fromQa("qa-access-reviews"),
-  },
-  { test: /training|awareness/i, build: fromQa("qa-training") },
-  { test: /vulnerab|patch/i, build: fromQa("qa-vuln-sla") },
-  { test: /\bdpo\b|gdpr|data protection|privacy/i, build: fromQa("qa-gdpr") },
-  {
-    test: /\blog(ging|s)?\b|siem|security monitoring/i,
-    build: (org) => {
-      const c = control(org, "AFG-LM-01");
-      return c
-        ? {
-            answer:
-              "Yes — security-relevant logs from identity, endpoints, cloud platforms and applications are collected centrally in Microsoft Sentinel (12 months hot retention, 24 months archive). A weekly structured log review is performed with documented sign-off, and high-severity alerts page the 24/7 on-call engineer.",
-            source: "Controls AFG-LM-01 — Central log collection; AFG-LM-02 — Log review & alerting",
-          }
-        : null;
-    },
+    test: /third[- ]?part|supplier|vendor (management|risk)|due diligence/i,
+    build: fromControl(
+      "LUM-TP-01",
+      "Suppliers are risk-classified before onboarding (critical / important / standard) based on data access and service criticality. Critical suppliers — Microsoft, SignaTrust, Datadog, GitHub and Officient — have security and audit clauses, a DPA where personal data is processed, and are reassessed annually against their assurance reports (ISO 27001, SOC 2, eIDAS conformity assessment)."
+    ),
   },
   {
-    test: /sdlc|secure (software )?development|code review/i,
-    build: (org) => {
-      const c = control(org, "AFG-SD-01");
-      return c
-        ? {
-            answer:
-              "Yes — all production code changes require peer-reviewed pull requests with passing CI (SAST, dependency and secret scanning). Branch protection is enforced on production repositories and deployments run only from protected branches via signed pipelines.",
-            source: `Control ${c.id} — ${c.name}`,
-          }
-        : null;
-    },
+    test: /asset (management|inventory|register)|inventory|cmdb/i,
+    build: fromControl(
+      "LUM-AM-01",
+      "Endpoints are inventoried in Intune, Azure resources in Azure Resource Graph (tagged with owner, environment and data classification) and applications in the ISMS application register. A programme is under way to complete owner attribution for the application register and to introduce an attested review cycle."
+    ),
   },
   {
-    test: /third[- ]?part|supplier|vendor/i,
-    build: (org) => {
-      const c = control(org, "AFG-TP-01");
-      return c
-        ? {
-            answer:
-              "Suppliers with access to our data or systems are risk-classified before onboarding, with security and audit clauses in contracts. Critical ICT providers are recorded in the DORA register of information and reassessed annually.",
-            source: `Control ${c.id} — ${c.name}; Supplier & Third-Party Security Policy`,
-          }
-        : null;
-    },
+    test: /risk (assessment|management|register)|risk analysis/i,
+    build: fromControl(
+      "LUM-GOV-02",
+      "Information security risks are assessed at least annually and on significant change using our ISO 27005-based Risk Management Procedure. Risks above appetite receive a treatment plan with an owner and due date, tracked in the risk register and reported to the quarterly Security Steering Committee."
+    ),
   },
   {
-    test: /screening|background check/i,
-    build: (org) => {
-      const c = control(org, "AFG-HR-01");
-      return c
-        ? {
-            answer:
-              "Yes — all new joiners undergo pre-employment screening proportionate to their role (identity verification, reference checks and criminal record extracts where lawful). Completion is registered before system access is granted.",
-            source: `Control ${c.id} — ${c.name}`,
-          }
-        : null;
-    },
+    test: /governance|steering committee|management review|\bisms\b/i,
+    build: fromControl(
+      "LUM-GOV-01",
+      "The CISO owns the ISMS on behalf of the management team. Security objectives, the risk register and the Statement of Applicability are reviewed at the quarterly Security Steering Committee (CEO, CTO, COO, CISO, DPO) and at the annual management review; internal audits follow a three-year programme."
+    ),
   },
   {
-    test: /physical/i,
-    build: (org) => {
-      const c = control(org, "AFG-PH-01");
-      return c
-        ? {
-            answer:
-              "Our offices are secured with badge access and visitor registration; server and network rooms have separate badge groups with access logging. Badge rights are removed as part of the leaver flow and access lists are reviewed twice a year.",
-            source: `Control ${c.id} — ${c.name}`,
-          }
-        : null;
-    },
+    test: /acceptable use|generative ai|\bai\b|chatgpt|copilot/i,
+    build: fromPolicy(
+      "acceptable-use",
+      "Use of Lumeo equipment, accounts and Microsoft 365 is governed by the Acceptable Use Policy, which also covers generative AI tools: only approved tools may be used, and customer or confidential data may not be entered into unapproved AI services. Managed devices only; monitoring is disclosed to staff."
+    ),
   },
 ];
 

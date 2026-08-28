@@ -7,14 +7,16 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
-    "smoke": "tsx scripts/smoke.mts"
+    "smoke": "tsx --conditions=react-server scripts/smoke.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
     "better-sqlite3": "^13.0.3",
     "lucide-react": "^1.31.0",
+    "mammoth": "^1.12.1",
     "next": "15.5.23",
     "next-auth": "^5.0.0-beta.32",
+    "pdf-parse": "^2.4.5",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "server-only": "^0.0.1",

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { LogOut } from "lucide-react";
+import { KeyRound, LogOut } from "lucide-react";
 import { signOut } from "next-auth/react";
+import { openKeyPanel } from "@/components/api-key-panel";
 
 export function UserMenu({ name, email }: { name: string; email: string }) {
   const [open, setOpen] = useState(false);
@@ -44,6 +45,9 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
     }
   };
 
+  const itemClass =
+    "flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-60";
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -57,7 +61,7 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
       {open && (
         <div
           role="menu"
-          className="animate-fade-up absolute right-0 top-10 z-20 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
+          className="animate-fade-up absolute right-0 top-10 z-20 w-60 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
         >
           <div className="px-3 py-2">
             <p className="truncate text-sm font-medium text-slate-900">{name}</p>
@@ -67,9 +71,21 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
           <button
             type="button"
             role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              openKeyPanel();
+            }}
+            className={itemClass}
+          >
+            <KeyRound className="size-4" />
+            Claude API key…
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             disabled={pending}
             onClick={handleSignOut}
-            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-60"
+            className={itemClass}
           >
             <LogOut className="size-4" />
             {pending ? "Signing out…" : "Sign out"}

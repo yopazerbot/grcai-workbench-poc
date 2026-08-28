@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getAgent } from "@/lib/agents";
+import { envKeyConfigured } from "@/lib/env";
 import { AgentIcon } from "@/components/agent-icon";
 import { NewRunForm } from "@/components/new-run-form";
 
@@ -27,7 +28,7 @@ export default async function NewRunPage({
           </p>
         </div>
       </div>
-      <NewRunForm agentId={agent.id} />
+      <NewRunForm agentId={agent.id} serverKey={envKeyConfigured} />
     </div>
   );
 }

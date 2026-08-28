@@ -90,7 +90,7 @@ export function baseSystemPrompt(orgContext: string, taskSection: string): strin
 Hard rules:
 - Use ONLY the information in <org_context>. Never invent facts, evidence, systems, dates or timestamps.
 - When the context does not cover something, say so explicitly through the schema's uncertainty field — never guess.
-- Every item must carry a source note naming the context section, control ID, past answer or system it came from.
+- Every fact in the context carries a [source: …] tag naming the document and section it was extracted from. Every item you produce must carry a source note citing those sources — document title plus section (e.g. "Access Control Policy v2.2, §3 Authentication"), control ID, past-answer document and question, or connected system — so an analyst can verify it.
 - You are read-only towards source material: describe changes, never claim to have made them.
 
 ${orgContext}

@@ -2,8 +2,8 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { env } from "./env";
-import { DDL } from "./schema";
-import { buildOrgKnowledgeRows } from "./seed/org-data";
+import { DDL, SCHEMA_VERSION, TABLES } from "./schema";
+import { seedKnowledge } from "./seed/lumeo";
 import { seedDemoRuns } from "./seed/demo-runs";
 
 declare global {
@@ -33,46 +33,41 @@ export function getDb(): Database.Database {
     `[db] opened ${path} (journal=${JSON.stringify(db.pragma("journal_mode", { simple: true }))})`
   );
   db.exec(DDL);
-  seedIfEmpty(db);
-
+  migrateIfNeeded(db);
+  // The singleton must be set before seeding: seed modules call getDb().
   globalThis.__grcaiDb = db;
+  seedIfEmpty(db);
   return db;
+}
+
+/**
+ * Demo store, not a production database: a db created by an older schema
+ * version is wiped and re-seeded rather than migrated in place.
+ */
+function migrateIfNeeded(db: Database.Database): void {
+  const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as
+    | { value: string }
+    | undefined;
+  if (!row || row.value === SCHEMA_VERSION) return;
+  console.log(`[db] schema ${row.value} → ${SCHEMA_VERSION}: resetting demo database`);
+  db.transaction(() => {
+    for (const t of TABLES) db.exec(`DROP TABLE IF EXISTS ${t}`);
+  })();
+  db.exec(DDL);
 }
 
 function seedIfEmpty(db: Database.Database): void {
   const now = new Date();
 
-  const orgCount = (
-    db.prepare("SELECT COUNT(*) AS c FROM org_knowledge").get() as { c: number }
-  ).c;
-  if (orgCount === 0) {
-    const insert = db.prepare(
-      `INSERT INTO org_knowledge (id, category, ref_id, title, body, data_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-    db.transaction(() => {
-      for (const r of buildOrgKnowledgeRows(now)) {
-        insert.run(
-          r.id,
-          r.category,
-          r.refId,
-          r.title,
-          r.body,
-          r.data == null ? null : JSON.stringify(r.data),
-          now.toISOString()
-        );
-      }
-      const meta = db.prepare(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)"
-      );
-      meta.run("schema_version", "1");
-      meta.run("seeded_at", now.toISOString());
-    })();
+  const docCount = (db.prepare("SELECT COUNT(*) AS c FROM documents").get() as { c: number }).c;
+  if (docCount === 0) {
+    seedKnowledge(db, now);
+    const meta = db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
+    meta.run("schema_version", SCHEMA_VERSION);
+    meta.run("seeded_at", now.toISOString());
   }
 
-  const runCount = (
-    db.prepare("SELECT COUNT(*) AS c FROM runs").get() as { c: number }
-  ).c;
+  const runCount = (db.prepare("SELECT COUNT(*) AS c FROM runs").get() as { c: number }).c;
   if (runCount === 0) {
     seedDemoRuns(db, now);
   }

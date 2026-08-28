@@ -11,8 +11,11 @@ export const env = {
   AUTH_MICROSOFT_ENTRA_ID_ISSUER: process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER ?? "",
 };
 
-/** Live Claude calls are made only when an API key is present. */
-export const llmConfigured = env.ANTHROPIC_API_KEY.length > 0;
+/**
+ * A server-wide Claude key is configured. Per-user session keys (sent by the
+ * browser on each request) work regardless of this flag — see lib/llm/key.ts.
+ */
+export const envKeyConfigured = env.ANTHROPIC_API_KEY.length > 0;
 
 /** Microsoft SSO is offered only when the full app registration is configured. */
 export const entraConfigured =

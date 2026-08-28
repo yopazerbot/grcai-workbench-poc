@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  ACCESS_CONTROL_POLICY_CHANGE_NOTE,
+  ACCESS_CONTROL_POLICY_TEXT,
+} from "@/lib/seed/lumeo/access-control-policy";
 import { baseSystemPrompt, truncate, type AgentDefinition } from "./types";
 
 const itemSchema = z.object({
@@ -14,26 +18,8 @@ const outputSchema = z.object({ items: z.array(itemSchema) });
 
 type Item = z.infer<typeof itemSchema>;
 
-const SAMPLE_POLICY = `Access Control Policy (v3.1)
-
-1. Purpose and scope
-This policy defines how access to Aldervelt Financial Group information systems is granted, reviewed and revoked. It applies to all employees, contractors and service accounts.
-
-2. Authentication
-Users authenticate with a unique personal account. Multi-factor authentication is required for remote access, using Microsoft Authenticator push approval. Passwords must be at least 12 characters.
-
-3. Access provisioning
-Access is granted on least privilege via role profiles. Manager approval is required for any access outside the standard role profile.
-
-4. Access revocation
-Line managers must notify IT within five working days when a contractor leaves. Employee access is removed automatically on the last working day.
-
-5. Access reviews
-Application owners recertify user access quarterly. Results are documented and revocations are applied within ten working days.`;
-
-const SAMPLE_CHANGES = `Passkeys (FIDO2) were rolled out to all staff in July — Authenticator push is now fallback only, and MFA applies to all access, not just remote.
-Contractor offboarding is now automated through the Personio leaver flow (same-day), replacing manual notification to IT.
-DORA is in force since January — incident-related access decisions must reference the incident response plan.`;
+const SAMPLE_POLICY = ACCESS_CONTROL_POLICY_TEXT;
+const SAMPLE_CHANGES = ACCESS_CONTROL_POLICY_CHANGE_NOTE;
 
 export const policyReviewerAgent: AgentDefinition = {
   id: "policy-reviewer",

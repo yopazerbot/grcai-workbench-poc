@@ -17,12 +17,14 @@ const outputSchema = z.object({ items: z.array(itemSchema) });
 
 type Item = z.infer<typeof itemSchema>;
 
-const SAMPLE_QUESTIONNAIRE = `1. Is your organisation certified against ISO/IEC 27001? Please provide certificate details and scope.
-2. Is customer data encrypted at rest and in transit? Describe algorithms and key management.
-3. Is multi-factor authentication enforced for all users, including administrators?
-4. Describe your backup and disaster recovery arrangements, including RTO/RPO targets and testing.
-5. Do you hold a SOC 2 Type II report?
-6. What is the coverage limit of your cyber insurance policy?`;
+const SAMPLE_QUESTIONNAIRE = `1. Is your organisation certified against ISO/IEC 27001? Please provide the certificate number, issuer, validity date and scope.
+2. Do you hold a SOC 2 Type II report or an ISAE 3402 assurance report? If not, which alternative assurance can you provide?
+3. In which country/region is our data hosted and processed, and which sub-processors are involved in delivering the service?
+4. How is our data encrypted at rest and in transit, and how are encryption keys managed and rotated?
+5. Is multi-factor authentication enforced for all users, including administrators and privileged accounts?
+6. What are your incident notification commitments towards us, and how do you support our DORA major ICT-related incident reporting obligations?
+7. Describe your backup and disaster recovery arrangements, including RTO/RPO targets and how recovery is tested.
+8. What is the coverage limit of your cyber insurance policy, and who is the insurer?`;
 
 export const questionnaireAgent: AgentDefinition = {
   id: "questionnaire",
@@ -42,7 +44,7 @@ export const questionnaireAgent: AgentDefinition = {
   ],
   inputSchema: z.object({ questionnaire: z.string().trim().min(1) }),
   sampleInput: { questionnaire: SAMPLE_QUESTIONNAIRE },
-  contextSections: ["profile", "certification", "control", "policy", "qa_pair", "assets"],
+  contextSections: ["profile", "certification", "control", "policy", "qa_pair", "asset"],
   outputSchema,
   buildPrompt(input, orgContext) {
     return {

@@ -1,22 +1,31 @@
 import type { Database } from "better-sqlite3";
 import { controlMapperAgent } from "@/lib/agents/control-mapper";
+import { evidenceAgent } from "@/lib/agents/evidence";
+import { questionnaireAgent } from "@/lib/agents/questionnaire";
+import { threatCheckerAgent } from "@/lib/agents/threat-checker";
+import type { AgentDefinition, ItemData } from "@/lib/agents/types";
 import { mockControlMapper } from "@/lib/mock/control-mapper";
-import type { OrgData } from "@/lib/org-context";
-import { QA_PAIRS } from "./org-data";
+import { mockEvidence } from "@/lib/mock/evidence";
+import { mockThreatChecker } from "@/lib/mock/threat-checker";
+import { getOrgData, sourceLabel, type OrgData } from "@/lib/org-context";
+import { QA_NOORDBANK } from "./lumeo/qa";
 
-// Two pre-seeded demo runs (plus their audit trail), so History and the Audit
-// log look alive on first open: one fully reviewed questionnaire run and one
-// DORA mapping still in review. Uses direct inserts to allow backdating.
+// Pre-seeded demo runs (plus their audit trail), so History, the Audit log
+// and the dashboard look alive on first open. Uses direct inserts to allow
+// backdating. The simulated generators are deterministic, so seeded items
+// are identical in shape and content to a live simulated run.
 
-const ANALYST = { name: "Demo Analyst", email: "analyst@demo.grcai.app" };
-const AGENT_EMAIL = "agents@grcai.app";
+const ELKE = { name: "Elke Van Damme", email: "elke.vandamme@lumeo.be" };
+const JONAS = { name: "Jonas Peeters", email: "jonas.peeters@lumeo.be" };
+const AGENT_EMAIL = "agents@lumeo.be";
 
-const qa = (id: string) => QA_PAIRS.find((q) => q.id === id)!;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+
+type Actor = { name: string; email: string };
 
 export function seedDemoRuns(db: Database, now: Date): void {
   const at = (msAgo: number) => new Date(now.getTime() - msAgo).toISOString();
-  const HOUR = 60 * 60 * 1000;
-  const DAY = 24 * HOUR;
 
   const insertRun = db.prepare(
     `INSERT INTO runs (id, agent_id, status, input_json, input_summary, model,
@@ -33,168 +42,227 @@ export function seedDemoRuns(db: Database, now: Date): void {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
-  db.transaction(() => {
-    // --- Run 1: questionnaire, fully reviewed, 3 days ago -----------------
-    const run1 = crypto.randomUUID();
-    const r1Start = 3 * DAY;
-    const questions = [
-      "1. Do you hold ISO 27001 certification, and what is its scope?",
-      "2. How is client data encrypted at rest?",
-      "3. What are your vulnerability remediation SLAs?",
-      "4. Describe the security awareness training provided to staff.",
-      "5. Please provide details of your public bug bounty programme.",
-    ];
+  const audit = (
+    ts: string,
+    actor: Actor,
+    action: string,
+    agentId: string,
+    runId: string,
+    itemId: string | null,
+    details: Record<string, unknown> | null
+  ) =>
+    insertAudit.run(ts, actor.name, actor.email, action, agentId, runId, itemId, details ? JSON.stringify(details) : null);
+
+  /**
+   * Seed one run from generated items. `decide` returns the outcome per item
+   * (null = leave as draft). Handles statuses, timestamps and the audit trail.
+   */
+  function seedRun(opts: {
+    agent: AgentDefinition;
+    actor: Actor;
+    input: Record<string, string>;
+    items: ItemData[];
+    startMsAgo: number;
+    edits?: Record<number, Partial<ItemData>>;
+    decide?: (item: ItemData, index: number) => "approved" | "rejected" | null;
+  }): string {
+    const { agent, actor, items, startMsAgo } = opts;
+    const runId = crypto.randomUUID();
+    const summary = agent.inputSummary(opts.input);
+    const draftedAt = at(startMsAgo - 45 * 1000);
+    const decisions = items.map((it, i) => opts.decide?.(it, i) ?? null);
+    const allDecided = decisions.every((d) => d !== null);
+    const decidedAt = at(startMsAgo - 6 * 60 * 1000);
+    const completedAt = allDecided ? decidedAt : null;
+
     insertRun.run(
-      run1,
-      "questionnaire",
-      "completed",
-      JSON.stringify({ questionnaire: questions.join("\n") }),
-      "Questionnaire · 5 lines",
-      ANALYST.name,
-      ANALYST.email,
-      at(r1Start),
-      at(r1Start - 7 * 60 * 1000),
-      at(r1Start - 5 * 60 * 1000)
+      runId,
+      agent.id,
+      allDecided ? "completed" : "review",
+      JSON.stringify(opts.input),
+      summary,
+      actor.name,
+      actor.email,
+      at(startMsAgo),
+      completedAt ?? draftedAt,
+      completedAt
     );
 
-    const editedAnswer =
-      "Yes — ISO/IEC 27001:2022 certified (certificate AFG-ISMS-2024-118, issued by Kiwa, valid until 31 March 2027), covering asset management services, the client portal, the portfolio management platform and supporting corporate IT across all three offices. Certificate and SoA available under NDA.";
-    const r1Items: Array<{
-      question: string;
-      answer: string;
-      original?: string;
-      source: string;
-      confidence: "confident" | "unsure";
-      needs: string | null;
-      status: "approved" | "rejected";
-      editedAt?: string;
-    }> = [
-      {
-        question: questions[0],
-        answer: editedAnswer,
-        original: qa("qa-iso").answer,
-        source: `Past answer — ${qa("qa-iso").source}`,
-        confidence: "confident",
-        needs: null,
-        status: "approved",
-        editedAt: at(r1Start - 3 * 60 * 1000),
+    let flaggedCount = 0;
+    const approvedIds: string[] = [];
+    const itemIds: string[] = [];
+    items.forEach((original, i) => {
+      const flag = agent.getFlag(original);
+      if (flag.flagged) flaggedCount++;
+      const edit = opts.edits?.[i];
+      const data = edit ? { ...original, ...edit } : original;
+      const decision = decisions[i];
+      const id = crypto.randomUUID();
+      itemIds.push(id);
+      insertItem.run(
+        id,
+        runId,
+        i,
+        decision ?? "draft",
+        JSON.stringify(data),
+        JSON.stringify(original),
+        flag.flagged ? 1 : 0,
+        flag.reason,
+        edit ? at(startMsAgo - 4 * 60 * 1000) : null,
+        decision ? decidedAt : null,
+        decision ? actor.name : null,
+        decision ? actor.email : null
+      );
+      if (decision === "approved") approvedIds.push(id);
+    });
+
+    audit(at(startMsAgo), actor, "run_started", agent.id, runId, null, { inputSummary: summary, engine: "simulated" });
+    audit(draftedAt, { name: `${agent.name} (agent)`, email: AGENT_EMAIL }, "run_drafts_created", agent.id, runId, null, {
+      count: items.length,
+      flagged: flaggedCount,
+      model: "simulated",
+      engine: "simulated",
+    });
+    for (const [idx, edit] of Object.entries(opts.edits ?? {})) {
+      audit(at(startMsAgo - 4 * 60 * 1000), actor, "item_edited", agent.id, runId, itemIds[Number(idx)], {
+        fields: Object.keys(edit),
+      });
+    }
+    decisions.forEach((d, i) => {
+      if (d === "rejected") {
+        audit(at(startMsAgo - 5 * 60 * 1000), actor, "item_rejected", agent.id, runId, itemIds[i], {
+          title: agent.itemTitle(items[i]),
+          flagged: agent.getFlag(items[i]).flagged,
+        });
+      }
+    });
+    if (approvedIds.length > 0) {
+      audit(decidedAt, actor, "items_bulk_approved", agent.id, runId, null, {
+        count: approvedIds.length,
+        scope: "all",
+        itemIds: approvedIds,
+      });
+    }
+    if (allDecided) {
+      audit(decidedAt, actor, "run_completed", agent.id, runId, null, null);
+    }
+    return runId;
+  }
+
+  const org: OrgData = getOrgData();
+  const qa = (id: string) => QA_NOORDBANK.find((q) => q.id === id)!;
+  const qaSource = (id: string) => {
+    const rec = org.qaPairs.find((q) => q.id === id);
+    return rec ? sourceLabel(rec) : "Past questionnaire answer";
+  };
+
+  db.transaction(() => {
+    // --- 1. ISO 27001 coverage mapping — completed 12 days ago (Elke) ---------
+    seedRun({
+      agent: controlMapperAgent,
+      actor: ELKE,
+      input: { framework: "iso27001" },
+      items: controlMapperAgent.toItems(
+        controlMapperAgent.outputSchema.parse(mockControlMapper({ framework: "iso27001" }, org))
+      ),
+      startMsAgo: 12 * DAY + 3 * HOUR,
+      edits: {
+        1: {
+          rationale:
+            "Inventories exist per platform (Intune, Azure Resource Graph, ISMS application register) but 14 of 61 applications in the register still lack a named owner and the consolidated inventory has no attested review cycle — confirmed with Platform on 14 August.",
+        },
       },
-      {
-        question: questions[1],
-        answer: qa("qa-encryption-rest").answer,
-        source: `Past answer — ${qa("qa-encryption-rest").source}`,
-        confidence: "confident",
-        needs: null,
-        status: "approved",
-      },
-      {
-        question: questions[2],
-        answer: qa("qa-vuln-sla").answer,
-        source: `Past answer — ${qa("qa-vuln-sla").source}`,
-        confidence: "confident",
-        needs: null,
-        status: "approved",
-      },
-      {
-        question: questions[3],
-        answer: qa("qa-training").answer,
-        source: `Past answer — ${qa("qa-training").source}`,
-        confidence: "confident",
-        needs: null,
-        status: "approved",
-      },
+      decide: () => "approved",
+    });
+
+    // --- 2. SOC 2 coverage mapping — completed 8 days ago (Elke) --------------
+    seedRun({
+      agent: controlMapperAgent,
+      actor: ELKE,
+      input: { framework: "soc2" },
+      items: controlMapperAgent.toItems(
+        controlMapperAgent.outputSchema.parse(mockControlMapper({ framework: "soc2" }, org))
+      ),
+      startMsAgo: 8 * DAY + 5 * HOUR,
+      decide: () => "approved",
+    });
+
+    // --- 3. Questionnaire — Noordbank follow-up, completed 5 days ago (Jonas) ---
+    const questions = [
+      "1. Please confirm your ISO/IEC 27001 certificate number, issuer, validity and scope.",
+      "2. Do you hold a SOC 2 Type II report? If not, when do you expect one?",
+      "3. What are your incident notification commitments and how do you support our DORA major-incident reporting?",
+      "4. Describe the exit and data return arrangements at contract termination.",
+      "5. What is the coverage limit of your cyber insurance policy, and who is the carrier?",
+    ];
+    const answerFor = (id: string) => ({
+      answer: qa(id).answer,
+      source_note: qaSource(id),
+      confidence: "confident" as const,
+      needs_from_analyst: null,
+    });
+    const qItems: ItemData[] = [
+      { question: questions[0], ...answerFor("qa-iso") },
+      { question: questions[1], ...answerFor("qa-soc2") },
+      { question: questions[2], ...answerFor("qa-incident-notification") },
+      { question: questions[3], ...answerFor("qa-exit") },
       {
         question: questions[4],
         answer:
           "The current answer library and control set do not cover this question, so no answer has been drafted.",
-        source: "No matching source in the knowledge base",
+        source_note: "No matching source in the knowledge base",
         confidence: "unsure",
-        needs:
-          "Confirm whether AFG operates a bug bounty or coordinated disclosure programme and draft this answer.",
-        status: "rejected",
+        needs_from_analyst:
+          "Confirm the cyber insurance carrier and coverage limit with Finance and consider adding the answer to the questionnaire library.",
       },
     ];
-
-    const r1ItemIds: string[] = [];
-    r1Items.forEach((item, i) => {
-      const id = crypto.randomUUID();
-      r1ItemIds.push(id);
-      const data = {
-        question: item.question,
-        answer: item.answer,
-        source_note: item.source,
-        confidence: item.confidence,
-        needs_from_analyst: item.needs,
-      };
-      const original = item.original ? { ...data, answer: item.original } : data;
-      insertItem.run(
-        id,
-        run1,
-        i,
-        item.status,
-        JSON.stringify(data),
-        JSON.stringify(original),
-        item.confidence === "unsure" ? 1 : 0,
-        item.confidence === "unsure" ? "Unsure — needs analyst" : null,
-        item.editedAt ?? null,
-        at(r1Start - 5 * 60 * 1000),
-        ANALYST.name,
-        ANALYST.email
-      );
+    seedRun({
+      agent: questionnaireAgent,
+      actor: JONAS,
+      input: { questionnaire: questions.join("\n") },
+      items: qItems,
+      startMsAgo: 5 * DAY + 2 * HOUR,
+      edits: {
+        1: {
+          answer: `${qa("qa-soc2").answer} Noordbank will receive the final report as soon as it is issued, under the existing NDA.`,
+        },
+      },
+      decide: (_item, i) => (i === 4 ? "rejected" : "approved"),
     });
 
-    const r1Agent = "Questionnaire Responder (agent)";
-    insertAudit.run(at(r1Start), ANALYST.name, ANALYST.email, "run_started", "questionnaire", run1, null, JSON.stringify({ inputSummary: "Questionnaire · 5 lines" }));
-    insertAudit.run(at(r1Start - 40 * 1000), r1Agent, AGENT_EMAIL, "run_drafts_created", "questionnaire", run1, null, JSON.stringify({ count: 5, flagged: 1, model: "simulated" }));
-    insertAudit.run(at(r1Start - 3 * 60 * 1000), ANALYST.name, ANALYST.email, "item_edited", "questionnaire", run1, r1ItemIds[0], JSON.stringify({ fields: ["answer"] }));
-    insertAudit.run(at(r1Start - 4 * 60 * 1000), ANALYST.name, ANALYST.email, "item_rejected", "questionnaire", run1, r1ItemIds[4], JSON.stringify({ title: "Please provide details of your public bug bounty programme.", flagged: true }));
-    insertAudit.run(at(r1Start - 5 * 60 * 1000), ANALYST.name, ANALYST.email, "items_bulk_approved", "questionnaire", run1, null, JSON.stringify({ count: 4, scope: "all", itemIds: r1ItemIds.slice(0, 4) }));
-    insertAudit.run(at(r1Start - 5 * 60 * 1000), ANALYST.name, ANALYST.email, "run_completed", "questionnaire", run1, null, null);
-    insertAudit.run(at(r1Start - 7 * 60 * 1000), ANALYST.name, ANALYST.email, "run_exported", "questionnaire", run1, null, JSON.stringify({ format: "markdown", itemCount: 4 }));
-
-    // --- Run 2: DORA coverage mapping, still in review, 2 hours ago -------
-    const run2 = crypto.randomUUID();
-    const r2Start = 2 * HOUR;
-    insertRun.run(
-      run2,
-      "control-mapper",
-      "review",
-      JSON.stringify({ framework: "dora" }),
-      "Coverage matrix · DORA",
-      ANALYST.name,
-      ANALYST.email,
-      at(r2Start),
-      at(r2Start - 50 * 1000),
-      null
-    );
-
-    // The simulated generator is deterministic — reuse it so seeded items are
-    // identical in shape and content to a live simulated run.
-    const parsed = controlMapperAgent.outputSchema.parse(
-      mockControlMapper({ framework: "dora" }, {} as OrgData)
-    );
-    const mapperItems = controlMapperAgent.toItems(parsed);
-    let flaggedCount = 0;
-    mapperItems.forEach((data, i) => {
-      const flag = controlMapperAgent.getFlag(data);
-      if (flag.flagged) flaggedCount++;
-      insertItem.run(
-        crypto.randomUUID(),
-        run2,
-        i,
-        "draft",
-        JSON.stringify(data),
-        JSON.stringify(data),
-        flag.flagged ? 1 : 0,
-        flag.reason,
-        null,
-        null,
-        null,
-        null
-      );
+    // --- 4. Threat check — completed 3 days ago (Elke) ------------------------
+    seedRun({
+      agent: threatCheckerAgent,
+      actor: ELKE,
+      input: threatCheckerAgent.sampleInput,
+      items: threatCheckerAgent.toItems(
+        threatCheckerAgent.outputSchema.parse(mockThreatChecker(threatCheckerAgent.sampleInput, org))
+      ),
+      startMsAgo: 3 * DAY + 4 * HOUR,
+      decide: () => "approved",
     });
 
-    insertAudit.run(at(r2Start), ANALYST.name, ANALYST.email, "run_started", "control-mapper", run2, null, JSON.stringify({ inputSummary: "Coverage matrix · DORA" }));
-    insertAudit.run(at(r2Start - 50 * 1000), "Control Mapper (agent)", AGENT_EMAIL, "run_drafts_created", "control-mapper", run2, null, JSON.stringify({ count: mapperItems.length, flagged: flaggedCount, model: "simulated" }));
+    // --- 5. Evidence pack — in review since yesterday (Jonas) -----------------
+    seedRun({
+      agent: evidenceAgent,
+      actor: JONAS,
+      input: evidenceAgent.sampleInput,
+      items: evidenceAgent.toItems(
+        evidenceAgent.outputSchema.parse(mockEvidence(evidenceAgent.sampleInput, org))
+      ),
+      startMsAgo: 1 * DAY + 1 * HOUR,
+      decide: (item) => (String(item.control_id) === "LUM-AC-02" ? "approved" : null),
+    });
+
+    // --- 6. NIS2 coverage mapping — in review, 2 hours ago (Elke) -------------
+    seedRun({
+      agent: controlMapperAgent,
+      actor: ELKE,
+      input: { framework: "nis2" },
+      items: controlMapperAgent.toItems(
+        controlMapperAgent.outputSchema.parse(mockControlMapper({ framework: "nis2" }, org))
+      ),
+      startMsAgo: 2 * HOUR,
+    });
   })();
 }
